@@ -133,8 +133,7 @@ function App() {
         electricalData
       );
 
-      const response = await fetch(
-        "http://127.0.0.1:8000/predict",
+      const response = await fetch("https://lt-shield-1.onrender.com/predict",
         {
           method: "POST",
 
@@ -1290,7 +1289,6 @@ function App() {
             </span>
 
           </div>
-
           <div className="network-line"></div>
 
           <div className="network-sections">

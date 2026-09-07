@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>InfraPulse AI - 3D Bridge Sensor Map</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background-color: #0f172a; 
+        }
+        canvas { 
+            display: block; 
+        }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(15, 23, 42, 0.85);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #3b82f6;
+            pointer-events: none;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        h2 { 
+            margin-top: 0; 
+            color: #60a5fa; 
+            font-size: 1.3rem; 
+            border-bottom: 1px solid #334155;
+            padding-bottom: 10px;
+        }
+        .legend-item { 
+            display: flex; 
+            align-items: center; 
+            margin-bottom: 12px; 
+            font-size: 0.95rem; 
+        }
+        .dot { 
+            width: 14px; 
+            height: 14px; 
+            border-radius: 50%; 
+            margin-right: 12px; 
+            box-shadow: 0 0 8px currentColor;
+        }
+        .red { background: #ef4444; color: #ef4444; }
+        .blue { background: #3b82f6; color: #3b82f6; }
+        .green { background: #22c55e; color: #22c55e; }
+        .yellow { background: #eab308; color: #eab308; }
+        .hint {
+            font-size: 0.8rem; 
+            color: #94a3b8; 
+            margin-top: 15px;
+            margin-bottom: 0;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <!-- Live Dashboard Legend overlay -->
+    <div id="ui">
+        <h2>InfraPulse AI Sensor Map</h2>
+        <div class="legend-item"><div class="dot red"></div> Pier Base (HC-SR04 / Scour)</div>
+        <div class="legend-item"><div class="dot blue"></div> Mid-Span (MPU6050 / Vibration)</div>
+        <div class="legend-item"><div class="dot green"></div> Expansion Joint (HX711 / Strain)</div>
+        <div class="legend-item"><div class="dot yellow"></div> ESP32 Edge Gateway</div>
+        <p class="hint">🖱️ Drag to rotate • Scroll to zoom</p>
+    </div>
+
+    <!-- Load Three.js core and OrbitControls -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <script>
+        // 1. Scene Setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color('#1e293b');
+        scene.fog = new THREE.FogExp2('#1e293b', 0.015); // Adds depth rendering
+
+        // 2. Camera Setup
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(35, 20, 45);
+
+        // 3. WebGL Renderer
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        // 4. Mouse Controls
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.maxPolarAngle = Math.PI / 2 - 0.05; // Prevent camera going under the water
+
+        // 5. Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+        
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(20, 40, 20);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        // 6. Materials
+        const concreteMaterial = new THREE.MeshStandardMaterial({ color: '#94a3b8', roughness: 0.9 });
+        const asphaltMaterial = new THREE.MeshStandardMaterial({ color: '#334155', roughness: 1.0 });
+        
+        // 7. Bridge Geometry
+        const bridge = new THREE.Group();
+
+        // Substructure: Piers (Concrete Pillars)
+        const pierGeo = new THREE.CylinderGeometry(1.5, 1.5, 20, 32);
+        
+        const pier1 = new THREE.Mesh(pierGeo, concreteMaterial);
+        pier1.position.set(-15, -5, 0);
+        pier1.castShadow = true;
+        
+        const pier2 = new THREE.Mesh(pierGeo, concreteMaterial);
+        pier2.position.set(15, -5, 0);
+        pier2.castShadow = true;
+        
+        bridge.add(pier1, pier2);
+
+        // Superstructure: Bridge Deck (Roadway)
+        const deckGeo = new THREE.BoxGeometry(50, 1.5, 10);
+        const deck = new THREE.Mesh(deckGeo, asphaltMaterial);
+        deck.position.set(0, 5, 0);
+        deck.castShadow = true;
+        bridge.add(deck);
+
+        // Environment: River Water
+        const waterGeo = new THREE.PlaneGeometry(200, 200);
+        const waterMat = new THREE.MeshStandardMaterial({ 
+            color: '#0284c7', 
+            transparent: true, 
+            opacity: 0.75,
+            roughness: 0.1
+        });
+        const water = new THREE.Mesh(waterGeo, waterMat);
+        water.rotation.x = -Math.PI / 2;
+        water.position.y = -12;
+        water.receiveShadow = true;
+        scene.add(water);
+
+        scene.add(bridge);
+
+        // 8. Interactive Sensor Nodes
+        const sensors = [];
+        
+        function createSensor(colorHex, position) {
+            const geo = new THREE.SphereGeometry(0.8, 16, 16);
+            const mat = new THREE.MeshStandardMaterial({ 
+                color: colorHex, 
+                emissive: colorHex, 
+                emissiveIntensity: 0.6 
+            });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.copy(position);
+            scene.add(mesh);
+            sensors.push(mesh);
+            return mesh;
+        }
+
+        // Substructure Scour Sensor (Red)
+        createSensor(0xef4444, new THREE.Vector3(15, -10, 2));
+        
+        // Mid-Span Accelerometer (Blue)
+        createSensor(0x3b82f6, new THREE.Vector3(0, 5, 5.5));
+        
+        // Expansion Joint Strain Gauge (Green)
+        createSensor(0x22c55e, new THREE.Vector3(-15, 6, 4.5));
+        
+        // ESP32 Edge Computing Gateway (Yellow)
+        createSensor(0xeab308, new THREE.Vector3(15, 1, 2));
+
+        // 9. Animation Engine (Pulsing effects)
+        const clock = new THREE.Clock();
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+
+            // Simulate live telemetry by pulsing the sensor nodes
+            const time = clock.getElapsedTime();
+            const scale = 1 + Math.sin(time * 6) * 0.15;
+            
+            sensors.forEach(sensor => {
+                sensor.scale.set(scale, scale, scale);
+            });
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // 10. Auto-resize Canvas
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
